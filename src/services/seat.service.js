@@ -87,3 +87,26 @@ export async function getSeatStatistics(showId) {
 
   return result;
 }
+
+export async function fetchSeatsForShow(showId) {
+  // Ensure show exists
+  const showExists = await db.Show.findByPk(showId, {
+    attributes: ["id"],
+  });
+
+  if (!showExists) {
+    throw new AppError("Show not found", 404);
+  }
+
+  // Release expired seat holds
+  await releaseExpiredSeats(showId);
+
+  // Fetch seats
+  const seats = await db.Seat.findAll({
+    where: { showId },
+    order: [["seatNumber", "ASC"]],
+    attributes: ["id", "seatNumber", "status", "holdExpiresAt"],
+  });
+
+  return seats;
+}

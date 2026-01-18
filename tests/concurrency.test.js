@@ -28,7 +28,7 @@ async function testConcurrentBooking() {
 
   const payload = {
     showId: 1,
-    seatIds: [1, 2, 3],
+    seatIds: [1,2,3],
   };
 
   const results = await Promise.allSettled([
@@ -81,7 +81,7 @@ async function testRapidSequentialBooking() {
     try {
       const response = await axios.post(`${BASE_URL}/bookings`, {
         showId: 1,
-        seatIds: [4 + i],
+        seatIds: [5 + i],
       });
       bookingIds.push(response.data.data.bookingId);
       log(
@@ -113,7 +113,7 @@ async function testIdempotency() {
   // First booking
   const firstResponse = await axios.post(`${BASE_URL}/bookings`, {
     showId: 1,
-    seatIds: [10, 11],
+    seatIds: [11, 12],
   });
 
   const bookingId = firstResponse.data.data.bookingId;
@@ -126,7 +126,7 @@ async function testIdempotency() {
   try {
     await axios.post(`${BASE_URL}/bookings`, {
       showId: 1,
-      seatIds: [10, 11],
+      seatIds: [11, 12],
     });
     log(`❌ Retry should have failed but succeeded!`, colors.red);
   } catch (error) {
@@ -137,6 +137,32 @@ async function testIdempotency() {
   }
 }
 
+async function testConfirmIdempotency() {
+  log("\n=== TEST: Confirm Idempotency ===", colors.cyan);
+
+  // 1️⃣ Create booking
+  const res = await axios.post(`${BASE_URL}/bookings`, {
+    showId: 1,
+    seatIds: [15, 16],
+  });
+
+  const bookingId = res.data.data.bookingId;
+  log(`✅ Booking created: ${bookingId}`, colors.green);
+
+  // 2️⃣ Confirm booking first time
+  await axios.post(`${BASE_URL}/bookings/${bookingId}/confirm`);
+  log(`✅ First confirmation succeeded`, colors.green);
+
+  // 3️⃣ Confirm booking again (retry)
+  try {
+    await axios.post(`${BASE_URL}/bookings/${bookingId}/confirm`);
+    log(`✅ Retry confirmation succeeded silently (idempotent)`, colors.green);
+  } catch (error) {
+    log(`❌ Retry confirmation failed: ${error.response?.data?.message}`, colors.red);
+  }
+}
+
+
 // ==============================================
 // Test 4: Confirm after hold expires
 // ==============================================
@@ -144,18 +170,18 @@ async function testExpiredConfirmation() {
   log("\n" + "=".repeat(60), colors.cyan);
   log("TEST 4: Confirming Expired Hold", colors.cyan);
   log("=".repeat(60), colors.cyan);
-  log("Attempting to confirm booking after hold expires (5 min wait)\n");
+  log("Attempting to confirm booking after hold expires ( 10 seconds wait for env=TEST)\n");
 
   const response = await axios.post(`${BASE_URL}/bookings`, {
     showId: 1,
-    seatIds: [15, 16],
+    seatIds: [19, 20],
   });
 
   const bookingId = response.data.data.bookingId;
   log(`✅ Booking created: ${bookingId}`, colors.green);
-  log(`⏳ Waiting 5 seconds (simulating expiry)...`, colors.yellow);
+  log(`⏳ Waiting 11 seconds (simulating expiry)...`, colors.yellow);
 
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, 11000));
 
   try {
     await axios.post(`${BASE_URL}/bookings/${bookingId}/confirm`);
@@ -217,6 +243,7 @@ async function runAllTests() {
     await testConcurrentBooking();
     const bookingIds = await testRapidSequentialBooking();
     await testIdempotency();
+    await testConfirmIdempotency();
     await testSeatStatistics();
 
     if (bookingIds.length > 0) {
@@ -224,7 +251,7 @@ async function runAllTests() {
     }
 
     // Uncomment to test expiry (takes 5+ seconds)
-    // await testExpiredConfirmation();
+    await testExpiredConfirmation();
 
     log("\n" + "=".repeat(60), colors.cyan);
     log("✅ All tests completed!", colors.green);

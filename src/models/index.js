@@ -22,4 +22,13 @@ db.Seat.belongsTo(db.Show, { foreignKey: "showId" });
 db.Show.hasMany(db.Booking, { foreignKey: "showId" });
 db.Booking.belongsTo(db.Show, { foreignKey: "showId" });
 
+db.Booking.hasMany(db.Seat, { 
+  foreignKey: "heldBy",
+  as: "seats" 
+});
+db.Seat.belongsTo(db.Booking, { 
+  foreignKey: "heldBy",
+  as: "booking"
+});
+
 export default db;

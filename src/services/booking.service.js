@@ -4,7 +4,9 @@ import db from "../models/index.js";
 import redisClient  from "../config/redis.js";
 import AppError from "../utils/AppError.js";
 
-const HOLD_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+const HOLD_DURATION_MS = process.env.NODE_ENV === "TEST"
+    ? 10000
+    : 5 * 60 * 1000;// 5 minutes
 const LOCK_TIMEOUT_MS = 10000; // 10 seconds
 
 /**
@@ -12,13 +14,10 @@ const LOCK_TIMEOUT_MS = 10000; // 10 seconds
  */
 async function acquireLock(lockKey, timeout = LOCK_TIMEOUT_MS) {
   const lockValue = Date.now().toString();
-  const result = await redisClient.set(
-    lockKey,
-    lockValue,
-    "PX",
-    timeout,
-    "NX"
-  );
+  const result = await redisClient.set(lockKey, lockValue, {
+    PX: timeout,
+    NX: true,
+  });
   return result === "OK" ? lockValue : null;
 }
 
@@ -33,13 +32,34 @@ async function releaseLock(lockKey, lockValue) {
       return 0
     end
   `;
-  await redisClient.eval(script, 1, lockKey, lockValue);
+  
+  try {
+    await redisClient.eval(script, {
+      keys: [lockKey],
+      arguments: [lockValue],
+    });
+  } catch (error) {
+    console.error("Error releasing lock:", error);
+  }
 }
 
 /**
  * Hold seats with distributed locking for concurrency safety
  */
 export async function holdSeats(showId, seatIds) {
+  const show = await db.Show.findByPk(showId);
+
+  if (!show) {
+    throw new AppError("Show not found", 404);
+  }
+
+  const now = new Date();
+
+
+  if (now >= show.showTime) {
+    throw new AppError("Show has already started", 400);
+  }
+
   // Create lock key for the specific seats
   const sortedSeatIds = [...seatIds].sort((a, b) => a - b);
   const lockKey = `lock:show:${showId}:seats:${sortedSeatIds.join(",")}`;
@@ -95,12 +115,14 @@ export async function holdSeats(showId, seatIds) {
         }
       );
 
-      if (updated !== seatIds.length) {
-        throw new AppError(
-          "One or more seats are unavailable. Please select different seats.",
-          409
-        );
-      }
+        if (updated !== seatIds.length) {
+        await db.Booking.destroy({
+         where: { id: booking.id },
+        transaction,
+        });
+        throw new AppError("Seats unavailable", 409);
+        }
+
 
       await transaction.commit();
 
@@ -137,6 +159,11 @@ export async function confirmBookingService(bookingId) {
       throw new AppError("Booking not found", 404);
     }
 
+    if (booking.status === "CONFIRMED") {
+    await transaction.commit();
+    return;
+    }
+
     if (booking.status !== "PENDING") {
       throw new AppError(
         `Cannot confirm booking with status: ${booking.status}`,
@@ -167,26 +194,24 @@ export async function confirmBookingService(bookingId) {
     }
 
     // Update seats to BOOKED
-    await db.Seat.update(
-      {
-        status: "BOOKED",
-        heldBy: null,
-        holdExpiresAt: null,
-      },
-      {
-        where: {
-          heldBy: bookingId,
-          status: "HELD",
-        },
-        transaction,
-      }
-    );
+await db.Seat.update(
+  { status: "BOOKED" },
+  {
+    where: { heldBy: bookingId },
+    transaction,
+  }
+);
+
+
 
     // Update booking status
     booking.status = "CONFIRMED";
     await booking.save({ transaction });
 
     await transaction.commit();
+
+    // send notificaiton to user with the required details using any queue service like bullmq, sqs ...
+    
   } catch (err) {
     await transaction.rollback();
     throw err;
@@ -250,6 +275,12 @@ export async function getBookingDetails(bookingId) {
         model: db.Show,
         attributes: ["id", "showTime", "totalSeats"],
       },
+      {
+        model: db.Seat,
+        as: "seats", // Use the alias defined in models/index.js
+        attributes: ["id", "seatNumber", "status"],
+        requied:true
+      },
     ],
   });
 
@@ -257,24 +288,11 @@ export async function getBookingDetails(bookingId) {
     return null;
   }
 
-  const seats = await db.Seat.findAll({
-    where: {
-      [Op.or]: [
-        { heldBy: bookingId },
-        {
-          heldBy: bookingId,
-          status: "BOOKED",
-        },
-      ],
-    },
-    attributes: ["id", "seatNumber", "status"],
-  });
-
   return {
     id: booking.id,
     showId: booking.showId,
     status: booking.status,
-    seats: seats.map((s) => ({
+    seats: booking.seats.map((s) => ({
       id: s.id,
       seatNumber: s.seatNumber,
       status: s.status,

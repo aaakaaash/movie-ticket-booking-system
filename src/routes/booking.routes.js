@@ -9,7 +9,7 @@ import {
 
 const router = express.Router();
 
-// POST /api/bookings - Create new booking (hold seats)
+// POST /api/bookings - Create new booking (temporarily hold seats before confirm booking )
 router.post("/bookings", createBooking);
 
 // GET /api/bookings/:bookingId - Get booking details

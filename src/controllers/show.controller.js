@@ -42,26 +42,6 @@ export async function getShow(req, res, next) {
   }
 }
 
-export async function getShowSeats(req, res, next) {
-  try {
-    const { showId } = req.params;
-
-    if (!showId) {
-      throw new AppError("showId is required", 400);
-    }
-
-    const seats = await fetchSeatsForShow(showId);
-
-    res.status(200).json({
-      success: true,
-      message: "Seats fetched successfully",
-      data: seats,
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
 export async function getShowBookings(req, res) {
   const { showId } = req.params;
   const { status } = req.query;
